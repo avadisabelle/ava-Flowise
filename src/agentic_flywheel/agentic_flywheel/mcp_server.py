@@ -692,6 +692,70 @@ async def handle_list_tools() -> List[types.Tool]:
                 },
                 "required": ["flow_name"]
             }
+        ),
+        # NEW TOOLS - Agentic Flywheel Capabilities
+        types.Tool(
+            name="flowise_list_profiles",
+            description="List available domain profiles for context-aware queries",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False
+            }
+        ),
+        types.Tool(
+            name="flowise_activate_profile",
+            description="Activate a domain profile for automatic context enrichment",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": "Profile ID to activate"
+                    }
+                },
+                "required": ["profile_id"]
+            }
+        ),
+        types.Tool(
+            name="flowise_get_cache_stats",
+            description="View caching performance metrics and hit rates",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False
+            }
+        ),
+        types.Tool(
+            name="flowise_clear_cache",
+            description="Clear cached responses (by flow, session, or all)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "flow_id": {
+                        "type": "string",
+                        "description": "Clear cache for specific flow (optional)"
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Clear cache for specific session (optional)"
+                    },
+                    "clear_all": {
+                        "type": "boolean",
+                        "description": "Clear entire cache (use with caution)",
+                        "default": false
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="flowise_get_classification_stats",
+            description="View intent classification metrics and confidence distribution",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False
+            }
         )
     ]
 
