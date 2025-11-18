@@ -17,7 +17,7 @@ Track completion status of delegated specification tasks and manage cherry-picki
 |---------|---------------|--------|------------------|-----------------|---------------|
 | task-01 | flowise_integration.spec.md | 🟡 Delegated | TBD | - | ❌ |
 | task-02 | langfuse_tracing.spec.md | 🟡 Delegated | TBD | - | ❌ |
-| task-03 | redis_storage.spec.md | 🟡 Delegated | TBD | - | ❌ |
+| task-03 | redis_storage.spec.md | ✅ Cherry-Picked | Gemini (Mia/Miette) | 2025-11-18 | ✅ |
 | task-04 | intent_classification.spec.md | 🟡 Delegated | TBD | - | ❌ |
 | task-05 | domain_specialization.spec.md | 🟡 Delegated | TBD | - | ❌ |
 | task-06 | mcp_server.spec.md | 🟡 Delegated | TBD | - | ❌ |
