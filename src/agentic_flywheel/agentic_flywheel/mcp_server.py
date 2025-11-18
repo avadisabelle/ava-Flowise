@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """
-JGT Flowise MCP Server
-Exposes flowise capabilities as MCP services with dynamic flow registry
+Agentic Flywheel MCP Server - Enhanced Edition
+
+Exposes Flowise capabilities as MCP services with:
+- Intelligent intent classification with confidence scoring
+- Redis-based response caching and session continuity
+- Langfuse observability tracing
+- Domain-specific context enrichment
+- Dynamic flow registry management
+
+Based on mcp-server.spec.md (v1.0) - RISE Framework
 """
 
 import os
@@ -9,26 +17,70 @@ import asyncio
 import json
 import logging
 import yaml
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 import httpx
 import click
-import webbrowser # Added for flowise_browse tool
+import webbrowser
 from mcp import server, types
 from mcp.server.models import InitializationOptions
 from mcp.server.lowlevel.server import NotificationOptions
 import mcp.server.stdio
 
+# Import Agentic Flywheel core modules
+from .persistence import get_persistence_manager, PersistenceManager
+from .observability import get_observability_manager, ObservabilityManager
+from .intent_classifier import get_intent_classifier, IntentClassifier
+from .context_builder import ContextBuilder, DomainProfile
+from .domain_manager import get_domain_manager, DomainManager
+
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 class FlowiseMCPServer:
-    """MCP Server for Flowise integration"""
-    
-    def __init__(self, flowise_base_url: str = "https://beagle-emerging-gnu.ngrok-free.app", config_path: Optional[str] = None):
+    """
+    Enhanced MCP Server for Flowise integration with full Agentic Flywheel capabilities.
+
+    This server transforms standard Flowise queries into intelligent, observable,
+    cached interactions with domain-specific context enrichment.
+    """
+
+    def __init__(
+        self,
+        flowise_base_url: str = "https://beagle-emerging-gnu.ngrok-free.app",
+        config_path: Optional[str] = None,
+        enable_caching: bool = True,
+        enable_tracing: bool = True,
+        enable_classification: bool = True
+    ):
+        """
+        Initialize the Agentic Flywheel MCP Server.
+
+        Args:
+            flowise_base_url: Base URL for Flowise instance
+            config_path: Optional path to flow configuration file
+            enable_caching: Enable Redis-based response caching
+            enable_tracing: Enable Langfuse observability tracing
+            enable_classification: Enable intelligent intent classification
+        """
         self.flowise_base_url = flowise_base_url
         self.active_sessions = {}
+
+        # Initialize core modules
+        self.persistence = get_persistence_manager() if enable_caching else None
+        self.observability = get_observability_manager(enable_tracing=enable_tracing)
+        self.domain_manager = get_domain_manager()
+
+        logger.info("✨ Agentic Flywheel MCP Server initializing...")
+        logger.info(f"   🔄 Caching: {'enabled' if enable_caching else 'disabled'}")
+        logger.info(f"   📊 Tracing: {'enabled' if enable_tracing else 'disabled'}")
+        logger.info(f"   🎯 Classification: {'enabled' if enable_classification else 'disabled'}")
 
         if config_path:
             try:
@@ -55,6 +107,21 @@ class FlowiseMCPServer:
                 self._load_from_yaml_registry()
         else:
             self._load_from_yaml_registry()
+
+        # Initialize intent classifier with loaded flow registry
+        self.intent_classifier = get_intent_classifier(
+            flow_registry=self.flows,
+            persistence_manager=self.persistence,
+            observability_manager=self.observability
+        ) if enable_classification else None
+
+        logger.info(f"✅ Agentic Flywheel MCP Server initialized with {len(self.flows)} flows")
+        if self.persistence:
+            logger.info("   💾 Persistence layer active - responses will be cached")
+        if self.observability:
+            logger.info("   📊 Observability layer active - all queries will be traced")
+        if self.intent_classifier:
+            logger.info("   🎯 Intent classifier active - intelligent routing enabled")
 
     def _load_from_yaml_registry(self):
         """Load flows from YAML registry, filtering by active flag"""
@@ -147,52 +214,149 @@ class FlowiseMCPServer:
             }
         }
     
-    async def _intelligent_query(self, 
-                                question: str,
-                                intent: Optional[str] = None,
-                                session_id: Optional[str] = None,
-                                flow_override: Optional[str] = None) -> Dict[str, Any]:
-        """Execute intelligent flowise query with flow selection"""
-        
-        # Determine flow to use
-        if flow_override and flow_override in self.flows:
-            flow_key = flow_override
-        elif intent and intent in self.flows:
-            flow_key = intent
-        else:
-            # Auto-classify intent based on keywords
-            flow_key = self._classify_intent(question)
-        
-        flow_config = self.flows[flow_key]
-        flow_id = flow_config["id"]
-        
+    async def _intelligent_query(
+        self,
+        question: str,
+        intent: Optional[str] = None,
+        session_id: Optional[str] = None,
+        flow_override: Optional[str] = None,
+        domain_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute intelligent Flowise query with full Agentic Flywheel enhancement.
+
+        This method orchestrates:
+        1. Observability tracing (Langfuse)
+        2. Cache checking and retrieval (Redis)
+        3. Intent classification with confidence scoring
+        4. Domain-specific context enrichment
+        5. Flow execution with timing
+        6. Response caching
+        7. Trace finalization
+
+        Args:
+            question: User's question
+            intent: Optional explicit intent override
+            session_id: Session identifier for continuity
+            flow_override: Optional flow key override
+            domain_context: Optional domain-specific context
+
+        Returns:
+            Response dictionary with answer, metadata, and trace information
+        """
+        start_time = time.time()
+
         # Generate session ID if not provided
         if not session_id:
-            import time, uuid
+            import uuid
             session_id = f"mcp-session-{int(time.time())}-{str(uuid.uuid4())[:8]}"
-        
-        # Build configuration
+
+        # 1. CREATE TRACE (if observability enabled)
+        trace_id = None
+        if self.observability:
+            try:
+                trace_id = await self.observability.create_trace(
+                    question=question,
+                    session_id=session_id,
+                    intent=intent or flow_override,
+                    metadata={"domain_context": domain_context is not None}
+                )
+            except Exception as e:
+                logger.warning(f"Trace creation failed (continuing): {str(e)}")
+
+        # 2. CLASSIFY INTENT (with confidence scoring)
+        if flow_override and flow_override in self.flows:
+            flow_key = flow_override
+            classification = None
+            logger.info(f"🎯 Flow override: {flow_key}")
+        elif intent and intent in self.flows:
+            flow_key = intent
+            classification = None
+            logger.info(f"🎯 Intent specified: {flow_key}")
+        elif self.intent_classifier:
+            # Use intelligent classifier
+            classification = await self.intent_classifier.classify_with_confidence(
+                question=question,
+                session_id=session_id,
+                domain_context=domain_context,
+                trace_id=trace_id
+            )
+            flow_key = classification['selected_flow']
+            logger.info(
+                f"🎯 Intent classified: {flow_key} "
+                f"(confidence: {classification['confidence']:.0%}, "
+                f"threshold: {classification['threshold_met']})"
+            )
+        else:
+            # Fallback to simple classification
+            flow_key = self._classify_intent(question)
+            classification = None
+            logger.info(f"🎯 Intent classified (simple): {flow_key}")
+
+        flow_config = self.flows[flow_key]
+        flow_id = flow_config["id"]
+
+        # 3. CHECK CACHE (if persistence enabled)
+        if self.persistence:
+            cache_key = self.persistence.generate_cache_key(session_id, question, flow_key)
+            cached_response = await self.persistence.check_cache(cache_key)
+
+            if cached_response:
+                # Cache hit! Add trace observation and return
+                if self.observability and trace_id:
+                    await self.observability.add_observation(
+                        trace_id=trace_id,
+                        name="Cache Retrieval",
+                        input_data={"cache_key": cache_key},
+                        output_data={"cache_hit": True, "retrieval_time_ms": int((time.time() - start_time) * 1000)},
+                        metadata={"flow_key": flow_key}
+                    )
+
+                logger.info(f"💾 Cache HIT - returning cached response ({int((time.time() - start_time) * 1000)}ms)")
+
+                # Enrich cached response with current metadata
+                cached_response["_mcp_metadata"]["cache_hit"] = True
+                cached_response["_mcp_metadata"]["trace_id"] = trace_id
+                cached_response["_mcp_metadata"]["classification"] = classification
+
+                return cached_response
+
+        # 4. BUILD CONFIGURATION
         config = flow_config["default_config"].copy()
         config["sessionId"] = session_id
-        
+
         # Track active session
         self.active_sessions[session_id] = {
             "flow_key": flow_key,
             "flow_name": flow_config["name"],
-            "created_at": asyncio.get_event_loop().time()
+            "created_at": asyncio.get_event_loop().time(),
+            "trace_id": trace_id
         }
-        
-        # Build payload
-        payload = {
-            "question": question,
-            "overrideConfig": config
-        }
-        
-        logger.info(f"Querying flow: {flow_config['name']} ({flow_id})")
-        logger.info(f"Session: {session_id}")
-        
+
+        # 5. EXECUTE FLOW (with tracing)
+        execution_start = time.time()
+
         async with httpx.AsyncClient() as client:
             try:
+                # Build payload
+                payload = {
+                    "question": question,
+                    "overrideConfig": config
+                }
+
+                logger.info(f"🚀 Executing flow: {flow_config['name']} ({flow_id})")
+
+                # Add flow execution observation
+                flow_obs_id = None
+                if self.observability and trace_id:
+                    flow_obs_id = await self.observability.start_observation(
+                        trace_id=trace_id,
+                        name=f"Flow Execution: {flow_config['name']}",
+                        input_data={"question": question, "config": config},
+                        metadata={"flow_id": flow_id, "flow_key": flow_key}
+                    )
+
+                # Execute query
                 response = await client.post(
                     f"{self.flowise_base_url}/api/v1/prediction/{flow_id}",
                     json=payload,
@@ -200,27 +364,80 @@ class FlowiseMCPServer:
                     timeout=30.0
                 )
                 response.raise_for_status()
-                
+
                 result = response.json()
-                
-                # Add metadata
+                execution_time_ms = int((time.time() - execution_start) * 1000)
+
+                # Finalize flow execution observation
+                if self.observability and trace_id and flow_obs_id:
+                    await self.observability.finalize_observation(
+                        trace_id=trace_id,
+                        observation_id=flow_obs_id,
+                        output_data={"response_length": len(result.get("text", result.get("answer", "")))},
+                        metadata={"execution_time_ms": execution_time_ms, "cache_miss": True}
+                    )
+
+                # 6. ADD COMPREHENSIVE METADATA
                 result["_mcp_metadata"] = {
                     "flow_used": flow_config["name"],
                     "flow_key": flow_key,
                     "flow_id": flow_id,
                     "session_id": session_id,
                     "intent_detected": flow_key,
-                    "config_used": config
+                    "config_used": config,
+                    "trace_id": trace_id,
+                    "cache_hit": False,
+                    "execution_time_ms": execution_time_ms,
+                    "total_time_ms": int((time.time() - start_time) * 1000),
+                    "timestamp": datetime.utcnow().isoformat()
                 }
-                
+
+                # Add classification metadata if available
+                if classification:
+                    result["_mcp_metadata"]["classification"] = {
+                        "confidence": classification['confidence'],
+                        "threshold_met": classification['threshold_met'],
+                        "reasoning": classification['reasoning'],
+                        "all_scores": classification['all_scores']
+                    }
+
+                # 7. CACHE THE RESPONSE (if persistence enabled)
+                if self.persistence:
+                    try:
+                        await self.persistence.write_to_cache(
+                            cache_key=cache_key,
+                            response_data=result,
+                            flow_key=flow_key
+                        )
+                        logger.info(f"💾 Response cached for future retrieval")
+                    except Exception as e:
+                        logger.warning(f"Cache write failed (continuing): {str(e)}")
+
+                logger.info(f"✅ Query complete ({result['_mcp_metadata']['total_time_ms']}ms total)")
                 return result
-                
+
             except httpx.RequestError as e:
-                logger.error(f"Request failed: {e}")
+                logger.error(f"❌ Request failed: {e}")
+
+                # Log error observation
+                if self.observability and trace_id:
+                    await self.observability.add_observation(
+                        trace_id=trace_id,
+                        name="Request Error",
+                        input_data={"question": question},
+                        output_data={"error": str(e)},
+                        metadata={"flow_attempted": flow_config["name"]}
+                    )
+
                 return {
                     "error": f"Request failed: {str(e)}",
                     "flow_attempted": flow_config["name"],
-                    "session_id": session_id
+                    "session_id": session_id,
+                    "_mcp_metadata": {
+                        "error": True,
+                        "trace_id": trace_id,
+                        "flow_attempted": flow_key
+                    }
                 }
     
     async def _configure_flow(self,
