@@ -107,3 +107,4 @@
 .env*
 .mcp*
 .settings*
+llms/
