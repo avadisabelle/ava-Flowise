@@ -20,7 +20,7 @@ Track completion status of delegated specification tasks and manage cherry-picki
 | task-03 | redis_storage.spec.md | ✅ Cherry-Picked | Gemini (Mia/Miette) | 2025-11-18 | ✅ |
 | task-04 | intent_classification.spec.md | 🟢 Completed | Orchestrator (5a90248b) | 2025-11-18 | ❌ |
 | task-05 | domain_specialization.spec.md | 🟡 Available | - | - | ❌ |
-| task-06 | mcp_server.spec.md | 🟡 Available | - | - | ❌ |
+| task-06 | mcp_server.spec.md | 🟢 Completed | Orchestrator (5a90248b) | 2025-11-18 | ❌ |
 
 **Status Legend:**
 - ⚪ Not Started
@@ -193,12 +193,12 @@ Update this file with completion status:
 
 **Total Tasks:** 6
 **Delegated:** 6
-**Completed:** 1 (in results/ folder)
+**Completed:** 3 (in results/ folder)
 **Cherry-Picked:** 1 (Redis Storage in rispecs/)
 **In Progress:** 2 (session_01VFduUkmLaY2PsP4JyfeaRe)
-**Remaining:** 2
+**Remaining:** 1 (task-05)
 
-**Estimated Completion:** ~2-3 hours (parallel execution active)
+**Estimated Completion:** ~1 hour (task-05 only, parallel sessions completing)
 
 ---
 
