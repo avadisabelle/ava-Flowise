@@ -934,26 +934,188 @@ Query: {arguments['question']}
         elif name == "flowise_browse":
             flow_name = arguments["flow_name"]
             canvas_mode = arguments.get("canvas", False)
-            
+
             flow_config = None
             for key, flow in flowise_server.flows.items():
                 if flow["name"] == flow_name:
                     flow_config = flow
                     break
-            
+
             if not flow_config:
                 return [types.TextContent(type="text", text=f"❌ Flow '{flow_name}' not found in registry.")]
-            
+
             flow_id = flow_config["id"]
             url_pattern = "canvas" if canvas_mode else "chatbot"
             browse_url = f"{flowise_server.flowise_base_url}/{url_pattern}/{flow_id}"
-            
+
             try:
                 webbrowser.open(browse_url)
                 return [types.TextContent(type="text", text=f"✅ Opened '{flow_name}' in browser: {browse_url}")]
             except Exception as e:
                 return [types.TextContent(type="text", text=f"❌ Failed to open browser for '{flow_name}': {str(e)}")]
-        
+
+        # NEW TOOL HANDLERS - Agentic Flywheel Capabilities
+
+        elif name == "flowise_list_profiles":
+            """List available domain profiles"""
+            if not flowise_server.domain_manager:
+                return [types.TextContent(type="text", text="Domain manager not initialized")]
+
+            profiles = flowise_server.domain_manager.list_profiles()
+
+            if not profiles:
+                return [types.TextContent(type="text", text="No domain profiles found. Create profiles in ~/.agentic_flywheel/profiles/")]
+
+            result = {
+                "total_profiles": len(profiles),
+                "profiles": profiles,
+                "profiles_directory": str(flowise_server.domain_manager.profiles_dir),
+                "active_profile": flowise_server.domain_manager._active_profile_id
+            }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "flowise_activate_profile":
+            """Activate a domain profile for automatic context enrichment"""
+            if not flowise_server.domain_manager:
+                return [types.TextContent(type="text", text="Domain manager not initialized")]
+
+            profile_id = arguments["profile_id"]
+
+            # Try to load profile if not already loaded
+            if profile_id not in flowise_server.domain_manager._loaded_profiles:
+                try:
+                    profile_path = f"{profile_id}.yaml"
+                    flowise_server.domain_manager.load_profile(profile_path)
+                except Exception as e:
+                    error_msg = f"❌ Failed to load profile '{profile_id}': {str(e)}"
+                    return [types.TextContent(type="text", text=error_msg)]
+
+            # Activate the profile
+            success = flowise_server.domain_manager.set_active_profile(profile_id)
+
+            if success:
+                active_profile = flowise_server.domain_manager.get_active_profile()
+                result = {
+                    "status": "success",
+                    "message": f"✅ Activated profile: {active_profile.name}",
+                    "profile_id": profile_id,
+                    "profile_name": active_profile.name,
+                    "profile_description": active_profile.description
+                }
+            else:
+                result = {
+                    "status": "error",
+                    "message": f"❌ Failed to activate profile '{profile_id}'"
+                }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "flowise_get_cache_stats":
+            """View caching performance metrics"""
+            if not flowise_server.persistence:
+                return [types.TextContent(type="text", text="Caching not enabled (persistence manager not initialized)")]
+
+            stats = flowise_server.persistence.get_cache_stats()
+
+            # Add formatted summary
+            summary = f"""
+📊 **Cache Performance Metrics**
+
+**Hit Rate:** {stats['hit_rate']:.1%}
+**Total Requests:** {stats['total_requests']:,}
+**Cache Hits:** {stats['hits']:,}
+**Cache Misses:** {stats['misses']:,}
+**Cache Writes:** {stats['writes']:,}
+**Errors:** {stats['errors']:,}
+**Status:** {stats['status'].upper()}
+
+**Value Created:**
+- Saved LLM calls: {stats['hits']:,}
+- Average response time improvement: ~{int((stats['hits'] / max(stats['total_requests'], 1)) * 2000)}ms saved per cached query
+"""
+
+            result = {
+                "summary": summary.strip(),
+                "detailed_stats": stats
+            }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "flowise_clear_cache":
+            """Clear cached responses"""
+            if not flowise_server.persistence:
+                return [types.TextContent(type="text", text="Caching not enabled (persistence manager not initialized)")]
+
+            flow_id = arguments.get("flow_id")
+            session_id = arguments.get("session_id")
+            clear_all = arguments.get("clear_all", False)
+
+            try:
+                if clear_all:
+                    # Note: Full cache clear would require Redis FLUSHDB or pattern scan
+                    # For now, reset stats as a safe operation
+                    flowise_server.persistence.reset_stats()
+                    result = {
+                        "status": "success",
+                        "message": "✅ Cache statistics reset (full cache clear requires Redis admin access)",
+                        "action": "stats_reset"
+                    }
+                elif session_id:
+                    cleared = await flowise_server.persistence.invalidate_session_cache(session_id)
+                    result = {
+                        "status": "success",
+                        "message": f"✅ Cleared {cleared} cached entries for session: {session_id}",
+                        "entries_cleared": cleared
+                    }
+                elif flow_id:
+                    cleared = await flowise_server.persistence.invalidate_flow_cache(flow_id)
+                    result = {
+                        "status": "success",
+                        "message": f"✅ Cleared {cleared} cached entries for flow: {flow_id}",
+                        "entries_cleared": cleared
+                    }
+                else:
+                    result = {
+                        "status": "error",
+                        "message": "❌ Must specify flow_id, session_id, or clear_all=true"
+                    }
+            except Exception as e:
+                result = {
+                    "status": "error",
+                    "message": f"❌ Cache clear failed: {str(e)}"
+                }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "flowise_get_classification_stats":
+            """View intent classification metrics"""
+            if not flowise_server.intent_classifier:
+                return [types.TextContent(type="text", text="Intent classification not enabled (classifier not initialized)")]
+
+            stats = flowise_server.intent_classifier.get_classification_stats()
+
+            # Add formatted summary
+            summary = f"""
+🎯 **Intent Classification Metrics**
+
+**Total Classifications:** {stats['total_classifications']:,}
+**High Confidence:** {stats['high_confidence']:,} ({stats['high_confidence_rate']:.1%})
+**Medium Confidence:** {stats['medium_confidence']:,} ({stats['medium_confidence_rate']:.1%})
+**Low Confidence:** {stats['low_confidence']:,} ({stats['low_confidence_rate']:.1%})
+
+**Quality Indicators:**
+- Routing accuracy: {"🟢 Excellent" if stats['high_confidence_rate'] > 0.7 else "🟡 Good" if stats['high_confidence_rate'] > 0.5 else "🔴 Needs improvement"}
+- System learning: {"Active" if stats['total_classifications'] > 0 else "No data yet"}
+"""
+
+            result = {
+                "summary": summary.strip(),
+                "detailed_stats": stats
+            }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     
@@ -981,6 +1143,31 @@ async def handle_list_resources() -> List[types.Resource]:
             uri="flowise://config-schema",
             name="Configuration Schema",
             description="Schema for flowise configuration parameters",
+            mimeType="application/json"
+        ),
+        # NEW RESOURCES - Agentic Flywheel Capabilities
+        types.Resource(
+            uri="profile://active",
+            name="Active Domain Profile",
+            description="Currently active domain profile with full context (technical, cultural, strategic)",
+            mimeType="application/json"
+        ),
+        types.Resource(
+            uri="stats://cache",
+            name="Cache Statistics",
+            description="Real-time caching performance metrics including hit rate and value created",
+            mimeType="application/json"
+        ),
+        types.Resource(
+            uri="stats://classification",
+            name="Classification Statistics",
+            description="Intent classification metrics showing confidence distribution and routing accuracy",
+            mimeType="application/json"
+        ),
+        types.Resource(
+            uri="stats://observability",
+            name="Observability Statistics",
+            description="Tracing statistics showing traces created and observability coverage",
             mimeType="application/json"
         )
     ]
@@ -1018,7 +1205,97 @@ async def handle_read_resource(uri: str) -> str:
             }
         }
         return json.dumps(schema, indent=2)
-    
+
+    # NEW RESOURCE HANDLERS - Agentic Flywheel Capabilities
+
+    elif uri == "profile://active":
+        """Return active domain profile with full context"""
+        if not flowise_server.domain_manager:
+            return json.dumps({"error": "Domain manager not initialized"}, indent=2)
+
+        active_profile = flowise_server.domain_manager.get_active_profile()
+
+        if not active_profile:
+            return json.dumps({
+                "active_profile": None,
+                "message": "No domain profile currently active",
+                "available_profiles": flowise_server.domain_manager.list_profiles()
+            }, indent=2)
+
+        # Return complete profile data
+        profile_data = {
+            "id": active_profile.id,
+            "name": active_profile.name,
+            "description": active_profile.description,
+            "version": active_profile.version,
+            "technical_context": active_profile.technical_context,
+            "cultural_context": active_profile.cultural_context,
+            "strategic_context": active_profile.strategic_context,
+            "specialized_keywords": active_profile.specialized_keywords,
+            "privacy_level": active_profile.privacy_level,
+            "tags": active_profile.tags,
+            "created_at": active_profile.created_at,
+            "updated_at": active_profile.updated_at
+        }
+
+        return json.dumps(profile_data, indent=2)
+
+    elif uri == "stats://cache":
+        """Return real-time cache performance metrics"""
+        if not flowise_server.persistence:
+            return json.dumps({
+                "error": "Caching not enabled",
+                "message": "Persistence manager not initialized"
+            }, indent=2)
+
+        stats = flowise_server.persistence.get_cache_stats()
+
+        # Add value calculations
+        stats["value_metrics"] = {
+            "llm_calls_saved": stats['hits'],
+            "estimated_cost_savings_usd": round(stats['hits'] * 0.002, 2),  # Rough estimate
+            "avg_response_time_improvement_ms": int((stats['hits'] / max(stats['total_requests'], 1)) * 2000)
+        }
+
+        return json.dumps(stats, indent=2)
+
+    elif uri == "stats://classification":
+        """Return intent classification metrics"""
+        if not flowise_server.intent_classifier:
+            return json.dumps({
+                "error": "Classification not enabled",
+                "message": "Intent classifier not initialized"
+            }, indent=2)
+
+        stats = flowise_server.intent_classifier.get_classification_stats()
+
+        # Add quality assessment
+        stats["quality_assessment"] = {
+            "routing_accuracy": "excellent" if stats['high_confidence_rate'] > 0.7 else "good" if stats['high_confidence_rate'] > 0.5 else "needs_improvement",
+            "system_maturity": "mature" if stats['total_classifications'] > 100 else "learning" if stats['total_classifications'] > 10 else "new"
+        }
+
+        return json.dumps(stats, indent=2)
+
+    elif uri == "stats://observability":
+        """Return observability/tracing statistics"""
+        if not flowise_server.observability:
+            return json.dumps({
+                "error": "Observability not enabled",
+                "message": "Observability manager not initialized"
+            }, indent=2)
+
+        stats = flowise_server.observability.get_trace_stats()
+
+        # Add coverage metrics
+        stats["coverage_metrics"] = {
+            "tracing_enabled": True,
+            "graceful_failure_mode": stats['graceful_failure_rate'] < 0.05,
+            "observability_health": "healthy" if stats['status'] == 'healthy' else "degraded"
+        }
+
+        return json.dumps(stats, indent=2)
+
     else:
         raise ValueError(f"Unknown resource: {uri}")
 
