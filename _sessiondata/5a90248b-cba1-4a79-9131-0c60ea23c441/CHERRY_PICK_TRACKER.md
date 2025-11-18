@@ -15,16 +15,17 @@ Track completion status of delegated specification tasks and manage cherry-picki
 
 | Task ID | Specification | Status | Subagent Session | Completion Date | Cherry-Picked |
 |---------|---------------|--------|------------------|-----------------|---------------|
-| task-01 | flowise_integration.spec.md | 🟡 Delegated | TBD | - | ❌ |
-| task-02 | langfuse_tracing.spec.md | 🟡 Delegated | TBD | - | ❌ |
+| task-01 | flowise_integration.spec.md | 🔄 In Progress | session_01VFduUkmLaY2PsP4JyfeaRe | - | ❌ |
+| task-02 | langfuse_tracing.spec.md | 🔄 In Progress | session_01VFduUkmLaY2PsP4JyfeaRe | - | ❌ |
 | task-03 | redis_storage.spec.md | ✅ Cherry-Picked | Gemini (Mia/Miette) | 2025-11-18 | ✅ |
-| task-04 | intent_classification.spec.md | 🟡 Delegated | TBD | - | ❌ |
-| task-05 | domain_specialization.spec.md | 🟡 Delegated | TBD | - | ❌ |
-| task-06 | mcp_server.spec.md | 🟡 Delegated | TBD | - | ❌ |
+| task-04 | intent_classification.spec.md | 🟡 Available | - | - | ❌ |
+| task-05 | domain_specialization.spec.md | 🟡 Available | - | - | ❌ |
+| task-06 | mcp_server.spec.md | 🟡 Available | - | - | ❌ |
 
 **Status Legend:**
 - ⚪ Not Started
-- 🟡 Delegated (waiting for completion)
+- 🟡 Available (ready for delegation)
+- 🔄 In Progress (agent actively working)
 - 🟢 Completed (in results/ folder)
 - ✅ Cherry-Picked (merged to rispecs/)
 
