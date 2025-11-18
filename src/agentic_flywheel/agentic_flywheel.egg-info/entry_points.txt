@@ -1,0 +1,6 @@
+[console_scripts]
+agentic-flywheel = agentic_flywheel.cli:main
+agentic-flywheel-config = agentic_flywheel.config_manager:main
+agentic-flywheel-gateway = agentic_flywheel.gateway:main
+agentic-flywheel-init = agentic_flywheel.init:main
+agentic-flywheel-mcp = agentic_flywheel.mcp_server:cli
