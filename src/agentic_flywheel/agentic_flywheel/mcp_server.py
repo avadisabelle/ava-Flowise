@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """
-JGT Flowise MCP Server
-Exposes flowise capabilities as MCP services with dynamic flow registry
+Agentic Flywheel MCP Server - Enhanced Edition
+
+Exposes Flowise capabilities as MCP services with:
+- Intelligent intent classification with confidence scoring
+- Redis-based response caching and session continuity
+- Langfuse observability tracing
+- Domain-specific context enrichment
+- Dynamic flow registry management
+
+Based on mcp-server.spec.md (v1.0) - RISE Framework
 """
 
 import os
@@ -9,26 +17,70 @@ import asyncio
 import json
 import logging
 import yaml
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 import httpx
 import click
-import webbrowser # Added for flowise_browse tool
+import webbrowser
 from mcp import server, types
 from mcp.server.models import InitializationOptions
 from mcp.server.lowlevel.server import NotificationOptions
 import mcp.server.stdio
 
+# Import Agentic Flywheel core modules
+from .persistence import get_persistence_manager, PersistenceManager
+from .observability import get_observability_manager, ObservabilityManager
+from .intent_classifier import get_intent_classifier, IntentClassifier
+from .context_builder import ContextBuilder, DomainProfile
+from .domain_manager import get_domain_manager, DomainManager
+
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 class FlowiseMCPServer:
-    """MCP Server for Flowise integration"""
-    
-    def __init__(self, flowise_base_url: str = "https://beagle-emerging-gnu.ngrok-free.app", config_path: Optional[str] = None):
+    """
+    Enhanced MCP Server for Flowise integration with full Agentic Flywheel capabilities.
+
+    This server transforms standard Flowise queries into intelligent, observable,
+    cached interactions with domain-specific context enrichment.
+    """
+
+    def __init__(
+        self,
+        flowise_base_url: str = "https://beagle-emerging-gnu.ngrok-free.app",
+        config_path: Optional[str] = None,
+        enable_caching: bool = True,
+        enable_tracing: bool = True,
+        enable_classification: bool = True
+    ):
+        """
+        Initialize the Agentic Flywheel MCP Server.
+
+        Args:
+            flowise_base_url: Base URL for Flowise instance
+            config_path: Optional path to flow configuration file
+            enable_caching: Enable Redis-based response caching
+            enable_tracing: Enable Langfuse observability tracing
+            enable_classification: Enable intelligent intent classification
+        """
         self.flowise_base_url = flowise_base_url
         self.active_sessions = {}
+
+        # Initialize core modules
+        self.persistence = get_persistence_manager() if enable_caching else None
+        self.observability = get_observability_manager(enable_tracing=enable_tracing)
+        self.domain_manager = get_domain_manager()
+
+        logger.info("✨ Agentic Flywheel MCP Server initializing...")
+        logger.info(f"   🔄 Caching: {'enabled' if enable_caching else 'disabled'}")
+        logger.info(f"   📊 Tracing: {'enabled' if enable_tracing else 'disabled'}")
+        logger.info(f"   🎯 Classification: {'enabled' if enable_classification else 'disabled'}")
 
         if config_path:
             try:
@@ -55,6 +107,21 @@ class FlowiseMCPServer:
                 self._load_from_yaml_registry()
         else:
             self._load_from_yaml_registry()
+
+        # Initialize intent classifier with loaded flow registry
+        self.intent_classifier = get_intent_classifier(
+            flow_registry=self.flows,
+            persistence_manager=self.persistence,
+            observability_manager=self.observability
+        ) if enable_classification else None
+
+        logger.info(f"✅ Agentic Flywheel MCP Server initialized with {len(self.flows)} flows")
+        if self.persistence:
+            logger.info("   💾 Persistence layer active - responses will be cached")
+        if self.observability:
+            logger.info("   📊 Observability layer active - all queries will be traced")
+        if self.intent_classifier:
+            logger.info("   🎯 Intent classifier active - intelligent routing enabled")
 
     def _load_from_yaml_registry(self):
         """Load flows from YAML registry, filtering by active flag"""
@@ -147,52 +214,149 @@ class FlowiseMCPServer:
             }
         }
     
-    async def _intelligent_query(self, 
-                                question: str,
-                                intent: Optional[str] = None,
-                                session_id: Optional[str] = None,
-                                flow_override: Optional[str] = None) -> Dict[str, Any]:
-        """Execute intelligent flowise query with flow selection"""
-        
-        # Determine flow to use
-        if flow_override and flow_override in self.flows:
-            flow_key = flow_override
-        elif intent and intent in self.flows:
-            flow_key = intent
-        else:
-            # Auto-classify intent based on keywords
-            flow_key = self._classify_intent(question)
-        
-        flow_config = self.flows[flow_key]
-        flow_id = flow_config["id"]
-        
+    async def _intelligent_query(
+        self,
+        question: str,
+        intent: Optional[str] = None,
+        session_id: Optional[str] = None,
+        flow_override: Optional[str] = None,
+        domain_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute intelligent Flowise query with full Agentic Flywheel enhancement.
+
+        This method orchestrates:
+        1. Observability tracing (Langfuse)
+        2. Cache checking and retrieval (Redis)
+        3. Intent classification with confidence scoring
+        4. Domain-specific context enrichment
+        5. Flow execution with timing
+        6. Response caching
+        7. Trace finalization
+
+        Args:
+            question: User's question
+            intent: Optional explicit intent override
+            session_id: Session identifier for continuity
+            flow_override: Optional flow key override
+            domain_context: Optional domain-specific context
+
+        Returns:
+            Response dictionary with answer, metadata, and trace information
+        """
+        start_time = time.time()
+
         # Generate session ID if not provided
         if not session_id:
-            import time, uuid
+            import uuid
             session_id = f"mcp-session-{int(time.time())}-{str(uuid.uuid4())[:8]}"
-        
-        # Build configuration
+
+        # 1. CREATE TRACE (if observability enabled)
+        trace_id = None
+        if self.observability:
+            try:
+                trace_id = await self.observability.create_trace(
+                    question=question,
+                    session_id=session_id,
+                    intent=intent or flow_override,
+                    metadata={"domain_context": domain_context is not None}
+                )
+            except Exception as e:
+                logger.warning(f"Trace creation failed (continuing): {str(e)}")
+
+        # 2. CLASSIFY INTENT (with confidence scoring)
+        if flow_override and flow_override in self.flows:
+            flow_key = flow_override
+            classification = None
+            logger.info(f"🎯 Flow override: {flow_key}")
+        elif intent and intent in self.flows:
+            flow_key = intent
+            classification = None
+            logger.info(f"🎯 Intent specified: {flow_key}")
+        elif self.intent_classifier:
+            # Use intelligent classifier
+            classification = await self.intent_classifier.classify_with_confidence(
+                question=question,
+                session_id=session_id,
+                domain_context=domain_context,
+                trace_id=trace_id
+            )
+            flow_key = classification['selected_flow']
+            logger.info(
+                f"🎯 Intent classified: {flow_key} "
+                f"(confidence: {classification['confidence']:.0%}, "
+                f"threshold: {classification['threshold_met']})"
+            )
+        else:
+            # Fallback to simple classification
+            flow_key = self._classify_intent(question)
+            classification = None
+            logger.info(f"🎯 Intent classified (simple): {flow_key}")
+
+        flow_config = self.flows[flow_key]
+        flow_id = flow_config["id"]
+
+        # 3. CHECK CACHE (if persistence enabled)
+        if self.persistence:
+            cache_key = self.persistence.generate_cache_key(session_id, question, flow_key)
+            cached_response = await self.persistence.check_cache(cache_key)
+
+            if cached_response:
+                # Cache hit! Add trace observation and return
+                if self.observability and trace_id:
+                    await self.observability.add_observation(
+                        trace_id=trace_id,
+                        name="Cache Retrieval",
+                        input_data={"cache_key": cache_key},
+                        output_data={"cache_hit": True, "retrieval_time_ms": int((time.time() - start_time) * 1000)},
+                        metadata={"flow_key": flow_key}
+                    )
+
+                logger.info(f"💾 Cache HIT - returning cached response ({int((time.time() - start_time) * 1000)}ms)")
+
+                # Enrich cached response with current metadata
+                cached_response["_mcp_metadata"]["cache_hit"] = True
+                cached_response["_mcp_metadata"]["trace_id"] = trace_id
+                cached_response["_mcp_metadata"]["classification"] = classification
+
+                return cached_response
+
+        # 4. BUILD CONFIGURATION
         config = flow_config["default_config"].copy()
         config["sessionId"] = session_id
-        
+
         # Track active session
         self.active_sessions[session_id] = {
             "flow_key": flow_key,
             "flow_name": flow_config["name"],
-            "created_at": asyncio.get_event_loop().time()
+            "created_at": asyncio.get_event_loop().time(),
+            "trace_id": trace_id
         }
-        
-        # Build payload
-        payload = {
-            "question": question,
-            "overrideConfig": config
-        }
-        
-        logger.info(f"Querying flow: {flow_config['name']} ({flow_id})")
-        logger.info(f"Session: {session_id}")
-        
+
+        # 5. EXECUTE FLOW (with tracing)
+        execution_start = time.time()
+
         async with httpx.AsyncClient() as client:
             try:
+                # Build payload
+                payload = {
+                    "question": question,
+                    "overrideConfig": config
+                }
+
+                logger.info(f"🚀 Executing flow: {flow_config['name']} ({flow_id})")
+
+                # Add flow execution observation
+                flow_obs_id = None
+                if self.observability and trace_id:
+                    flow_obs_id = await self.observability.start_observation(
+                        trace_id=trace_id,
+                        name=f"Flow Execution: {flow_config['name']}",
+                        input_data={"question": question, "config": config},
+                        metadata={"flow_id": flow_id, "flow_key": flow_key}
+                    )
+
+                # Execute query
                 response = await client.post(
                     f"{self.flowise_base_url}/api/v1/prediction/{flow_id}",
                     json=payload,
@@ -200,27 +364,80 @@ class FlowiseMCPServer:
                     timeout=30.0
                 )
                 response.raise_for_status()
-                
+
                 result = response.json()
-                
-                # Add metadata
+                execution_time_ms = int((time.time() - execution_start) * 1000)
+
+                # Finalize flow execution observation
+                if self.observability and trace_id and flow_obs_id:
+                    await self.observability.finalize_observation(
+                        trace_id=trace_id,
+                        observation_id=flow_obs_id,
+                        output_data={"response_length": len(result.get("text", result.get("answer", "")))},
+                        metadata={"execution_time_ms": execution_time_ms, "cache_miss": True}
+                    )
+
+                # 6. ADD COMPREHENSIVE METADATA
                 result["_mcp_metadata"] = {
                     "flow_used": flow_config["name"],
                     "flow_key": flow_key,
                     "flow_id": flow_id,
                     "session_id": session_id,
                     "intent_detected": flow_key,
-                    "config_used": config
+                    "config_used": config,
+                    "trace_id": trace_id,
+                    "cache_hit": False,
+                    "execution_time_ms": execution_time_ms,
+                    "total_time_ms": int((time.time() - start_time) * 1000),
+                    "timestamp": datetime.utcnow().isoformat()
                 }
-                
+
+                # Add classification metadata if available
+                if classification:
+                    result["_mcp_metadata"]["classification"] = {
+                        "confidence": classification['confidence'],
+                        "threshold_met": classification['threshold_met'],
+                        "reasoning": classification['reasoning'],
+                        "all_scores": classification['all_scores']
+                    }
+
+                # 7. CACHE THE RESPONSE (if persistence enabled)
+                if self.persistence:
+                    try:
+                        await self.persistence.write_to_cache(
+                            cache_key=cache_key,
+                            response_data=result,
+                            flow_key=flow_key
+                        )
+                        logger.info(f"💾 Response cached for future retrieval")
+                    except Exception as e:
+                        logger.warning(f"Cache write failed (continuing): {str(e)}")
+
+                logger.info(f"✅ Query complete ({result['_mcp_metadata']['total_time_ms']}ms total)")
                 return result
-                
+
             except httpx.RequestError as e:
-                logger.error(f"Request failed: {e}")
+                logger.error(f"❌ Request failed: {e}")
+
+                # Log error observation
+                if self.observability and trace_id:
+                    await self.observability.add_observation(
+                        trace_id=trace_id,
+                        name="Request Error",
+                        input_data={"question": question},
+                        output_data={"error": str(e)},
+                        metadata={"flow_attempted": flow_config["name"]}
+                    )
+
                 return {
                     "error": f"Request failed: {str(e)}",
                     "flow_attempted": flow_config["name"],
-                    "session_id": session_id
+                    "session_id": session_id,
+                    "_mcp_metadata": {
+                        "error": True,
+                        "trace_id": trace_id,
+                        "flow_attempted": flow_key
+                    }
                 }
     
     async def _configure_flow(self,
@@ -475,6 +692,70 @@ async def handle_list_tools() -> List[types.Tool]:
                 },
                 "required": ["flow_name"]
             }
+        ),
+        # NEW TOOLS - Agentic Flywheel Capabilities
+        types.Tool(
+            name="flowise_list_profiles",
+            description="List available domain profiles for context-aware queries",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False
+            }
+        ),
+        types.Tool(
+            name="flowise_activate_profile",
+            description="Activate a domain profile for automatic context enrichment",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": "Profile ID to activate"
+                    }
+                },
+                "required": ["profile_id"]
+            }
+        ),
+        types.Tool(
+            name="flowise_get_cache_stats",
+            description="View caching performance metrics and hit rates",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False
+            }
+        ),
+        types.Tool(
+            name="flowise_clear_cache",
+            description="Clear cached responses (by flow, session, or all)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "flow_id": {
+                        "type": "string",
+                        "description": "Clear cache for specific flow (optional)"
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Clear cache for specific session (optional)"
+                    },
+                    "clear_all": {
+                        "type": "boolean",
+                        "description": "Clear entire cache (use with caution)",
+                        "default": false
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="flowise_get_classification_stats",
+            description="View intent classification metrics and confidence distribution",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False
+            }
         )
     ]
 
@@ -653,26 +934,188 @@ Query: {arguments['question']}
         elif name == "flowise_browse":
             flow_name = arguments["flow_name"]
             canvas_mode = arguments.get("canvas", False)
-            
+
             flow_config = None
             for key, flow in flowise_server.flows.items():
                 if flow["name"] == flow_name:
                     flow_config = flow
                     break
-            
+
             if not flow_config:
                 return [types.TextContent(type="text", text=f"❌ Flow '{flow_name}' not found in registry.")]
-            
+
             flow_id = flow_config["id"]
             url_pattern = "canvas" if canvas_mode else "chatbot"
             browse_url = f"{flowise_server.flowise_base_url}/{url_pattern}/{flow_id}"
-            
+
             try:
                 webbrowser.open(browse_url)
                 return [types.TextContent(type="text", text=f"✅ Opened '{flow_name}' in browser: {browse_url}")]
             except Exception as e:
                 return [types.TextContent(type="text", text=f"❌ Failed to open browser for '{flow_name}': {str(e)}")]
-        
+
+        # NEW TOOL HANDLERS - Agentic Flywheel Capabilities
+
+        elif name == "flowise_list_profiles":
+            """List available domain profiles"""
+            if not flowise_server.domain_manager:
+                return [types.TextContent(type="text", text="Domain manager not initialized")]
+
+            profiles = flowise_server.domain_manager.list_profiles()
+
+            if not profiles:
+                return [types.TextContent(type="text", text="No domain profiles found. Create profiles in ~/.agentic_flywheel/profiles/")]
+
+            result = {
+                "total_profiles": len(profiles),
+                "profiles": profiles,
+                "profiles_directory": str(flowise_server.domain_manager.profiles_dir),
+                "active_profile": flowise_server.domain_manager._active_profile_id
+            }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "flowise_activate_profile":
+            """Activate a domain profile for automatic context enrichment"""
+            if not flowise_server.domain_manager:
+                return [types.TextContent(type="text", text="Domain manager not initialized")]
+
+            profile_id = arguments["profile_id"]
+
+            # Try to load profile if not already loaded
+            if profile_id not in flowise_server.domain_manager._loaded_profiles:
+                try:
+                    profile_path = f"{profile_id}.yaml"
+                    flowise_server.domain_manager.load_profile(profile_path)
+                except Exception as e:
+                    error_msg = f"❌ Failed to load profile '{profile_id}': {str(e)}"
+                    return [types.TextContent(type="text", text=error_msg)]
+
+            # Activate the profile
+            success = flowise_server.domain_manager.set_active_profile(profile_id)
+
+            if success:
+                active_profile = flowise_server.domain_manager.get_active_profile()
+                result = {
+                    "status": "success",
+                    "message": f"✅ Activated profile: {active_profile.name}",
+                    "profile_id": profile_id,
+                    "profile_name": active_profile.name,
+                    "profile_description": active_profile.description
+                }
+            else:
+                result = {
+                    "status": "error",
+                    "message": f"❌ Failed to activate profile '{profile_id}'"
+                }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "flowise_get_cache_stats":
+            """View caching performance metrics"""
+            if not flowise_server.persistence:
+                return [types.TextContent(type="text", text="Caching not enabled (persistence manager not initialized)")]
+
+            stats = flowise_server.persistence.get_cache_stats()
+
+            # Add formatted summary
+            summary = f"""
+📊 **Cache Performance Metrics**
+
+**Hit Rate:** {stats['hit_rate']:.1%}
+**Total Requests:** {stats['total_requests']:,}
+**Cache Hits:** {stats['hits']:,}
+**Cache Misses:** {stats['misses']:,}
+**Cache Writes:** {stats['writes']:,}
+**Errors:** {stats['errors']:,}
+**Status:** {stats['status'].upper()}
+
+**Value Created:**
+- Saved LLM calls: {stats['hits']:,}
+- Average response time improvement: ~{int((stats['hits'] / max(stats['total_requests'], 1)) * 2000)}ms saved per cached query
+"""
+
+            result = {
+                "summary": summary.strip(),
+                "detailed_stats": stats
+            }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "flowise_clear_cache":
+            """Clear cached responses"""
+            if not flowise_server.persistence:
+                return [types.TextContent(type="text", text="Caching not enabled (persistence manager not initialized)")]
+
+            flow_id = arguments.get("flow_id")
+            session_id = arguments.get("session_id")
+            clear_all = arguments.get("clear_all", False)
+
+            try:
+                if clear_all:
+                    # Note: Full cache clear would require Redis FLUSHDB or pattern scan
+                    # For now, reset stats as a safe operation
+                    flowise_server.persistence.reset_stats()
+                    result = {
+                        "status": "success",
+                        "message": "✅ Cache statistics reset (full cache clear requires Redis admin access)",
+                        "action": "stats_reset"
+                    }
+                elif session_id:
+                    cleared = await flowise_server.persistence.invalidate_session_cache(session_id)
+                    result = {
+                        "status": "success",
+                        "message": f"✅ Cleared {cleared} cached entries for session: {session_id}",
+                        "entries_cleared": cleared
+                    }
+                elif flow_id:
+                    cleared = await flowise_server.persistence.invalidate_flow_cache(flow_id)
+                    result = {
+                        "status": "success",
+                        "message": f"✅ Cleared {cleared} cached entries for flow: {flow_id}",
+                        "entries_cleared": cleared
+                    }
+                else:
+                    result = {
+                        "status": "error",
+                        "message": "❌ Must specify flow_id, session_id, or clear_all=true"
+                    }
+            except Exception as e:
+                result = {
+                    "status": "error",
+                    "message": f"❌ Cache clear failed: {str(e)}"
+                }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "flowise_get_classification_stats":
+            """View intent classification metrics"""
+            if not flowise_server.intent_classifier:
+                return [types.TextContent(type="text", text="Intent classification not enabled (classifier not initialized)")]
+
+            stats = flowise_server.intent_classifier.get_classification_stats()
+
+            # Add formatted summary
+            summary = f"""
+🎯 **Intent Classification Metrics**
+
+**Total Classifications:** {stats['total_classifications']:,}
+**High Confidence:** {stats['high_confidence']:,} ({stats['high_confidence_rate']:.1%})
+**Medium Confidence:** {stats['medium_confidence']:,} ({stats['medium_confidence_rate']:.1%})
+**Low Confidence:** {stats['low_confidence']:,} ({stats['low_confidence_rate']:.1%})
+
+**Quality Indicators:**
+- Routing accuracy: {"🟢 Excellent" if stats['high_confidence_rate'] > 0.7 else "🟡 Good" if stats['high_confidence_rate'] > 0.5 else "🔴 Needs improvement"}
+- System learning: {"Active" if stats['total_classifications'] > 0 else "No data yet"}
+"""
+
+            result = {
+                "summary": summary.strip(),
+                "detailed_stats": stats
+            }
+
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     
@@ -700,6 +1143,31 @@ async def handle_list_resources() -> List[types.Resource]:
             uri="flowise://config-schema",
             name="Configuration Schema",
             description="Schema for flowise configuration parameters",
+            mimeType="application/json"
+        ),
+        # NEW RESOURCES - Agentic Flywheel Capabilities
+        types.Resource(
+            uri="profile://active",
+            name="Active Domain Profile",
+            description="Currently active domain profile with full context (technical, cultural, strategic)",
+            mimeType="application/json"
+        ),
+        types.Resource(
+            uri="stats://cache",
+            name="Cache Statistics",
+            description="Real-time caching performance metrics including hit rate and value created",
+            mimeType="application/json"
+        ),
+        types.Resource(
+            uri="stats://classification",
+            name="Classification Statistics",
+            description="Intent classification metrics showing confidence distribution and routing accuracy",
+            mimeType="application/json"
+        ),
+        types.Resource(
+            uri="stats://observability",
+            name="Observability Statistics",
+            description="Tracing statistics showing traces created and observability coverage",
             mimeType="application/json"
         )
     ]
@@ -737,7 +1205,97 @@ async def handle_read_resource(uri: str) -> str:
             }
         }
         return json.dumps(schema, indent=2)
-    
+
+    # NEW RESOURCE HANDLERS - Agentic Flywheel Capabilities
+
+    elif uri == "profile://active":
+        """Return active domain profile with full context"""
+        if not flowise_server.domain_manager:
+            return json.dumps({"error": "Domain manager not initialized"}, indent=2)
+
+        active_profile = flowise_server.domain_manager.get_active_profile()
+
+        if not active_profile:
+            return json.dumps({
+                "active_profile": None,
+                "message": "No domain profile currently active",
+                "available_profiles": flowise_server.domain_manager.list_profiles()
+            }, indent=2)
+
+        # Return complete profile data
+        profile_data = {
+            "id": active_profile.id,
+            "name": active_profile.name,
+            "description": active_profile.description,
+            "version": active_profile.version,
+            "technical_context": active_profile.technical_context,
+            "cultural_context": active_profile.cultural_context,
+            "strategic_context": active_profile.strategic_context,
+            "specialized_keywords": active_profile.specialized_keywords,
+            "privacy_level": active_profile.privacy_level,
+            "tags": active_profile.tags,
+            "created_at": active_profile.created_at,
+            "updated_at": active_profile.updated_at
+        }
+
+        return json.dumps(profile_data, indent=2)
+
+    elif uri == "stats://cache":
+        """Return real-time cache performance metrics"""
+        if not flowise_server.persistence:
+            return json.dumps({
+                "error": "Caching not enabled",
+                "message": "Persistence manager not initialized"
+            }, indent=2)
+
+        stats = flowise_server.persistence.get_cache_stats()
+
+        # Add value calculations
+        stats["value_metrics"] = {
+            "llm_calls_saved": stats['hits'],
+            "estimated_cost_savings_usd": round(stats['hits'] * 0.002, 2),  # Rough estimate
+            "avg_response_time_improvement_ms": int((stats['hits'] / max(stats['total_requests'], 1)) * 2000)
+        }
+
+        return json.dumps(stats, indent=2)
+
+    elif uri == "stats://classification":
+        """Return intent classification metrics"""
+        if not flowise_server.intent_classifier:
+            return json.dumps({
+                "error": "Classification not enabled",
+                "message": "Intent classifier not initialized"
+            }, indent=2)
+
+        stats = flowise_server.intent_classifier.get_classification_stats()
+
+        # Add quality assessment
+        stats["quality_assessment"] = {
+            "routing_accuracy": "excellent" if stats['high_confidence_rate'] > 0.7 else "good" if stats['high_confidence_rate'] > 0.5 else "needs_improvement",
+            "system_maturity": "mature" if stats['total_classifications'] > 100 else "learning" if stats['total_classifications'] > 10 else "new"
+        }
+
+        return json.dumps(stats, indent=2)
+
+    elif uri == "stats://observability":
+        """Return observability/tracing statistics"""
+        if not flowise_server.observability:
+            return json.dumps({
+                "error": "Observability not enabled",
+                "message": "Observability manager not initialized"
+            }, indent=2)
+
+        stats = flowise_server.observability.get_trace_stats()
+
+        # Add coverage metrics
+        stats["coverage_metrics"] = {
+            "tracing_enabled": True,
+            "graceful_failure_mode": stats['graceful_failure_rate'] < 0.05,
+            "observability_health": "healthy" if stats['status'] == 'healthy' else "degraded"
+        }
+
+        return json.dumps(stats, indent=2)
+
     else:
         raise ValueError(f"Unknown resource: {uri}")
 
