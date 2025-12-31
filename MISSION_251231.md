@@ -4,11 +4,22 @@
 
 ## Your Role in the Stack
 
-The Agentic Flywheel is the **agent coordination layer** that makes narrative-aware decisions. Rather than routing based on keywords alone, it understands:
-- What narrative moment is happening (setup, crisis, resolution, character reveal)
-- What emotional tone is needed (tension, resolution, introspection)
-- What character perspective is active
-- What thematic threads need reinforcement
+The Agentic Flywheel is the **Flowise-specific agent coordination layer**. While ava-langflow handles universal routing across multiple backends, you specialize in:
+- Flowise flow management and execution
+- Domain-specific flow registry
+- Flowise-native intent classification
+- Flow parameter optimization
+
+**Relationship to ava-langflow**: ava-langflow routes to you when Flowise is the best backend for a query.
+
+## The Three Universes Context
+
+Every query can be processed through three lenses:
+- **Engineer World (Mia)**: Technical precision, API schemas, build status
+- **Ceremony World (Ava8)**: Relational accountability, sacred pause, K'é mapping
+- **Story Engine World (Miette)**: Narrative function, act position, character arc
+
+When ava-langflow routes a query to Flowise, you receive the universe analysis and should select flows that serve the lead universe.
 
 ## Current Status
 
