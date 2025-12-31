@@ -107,3 +107,11 @@
 .env*
 .mcp*
 .settings*
+llms/
+
+## Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
