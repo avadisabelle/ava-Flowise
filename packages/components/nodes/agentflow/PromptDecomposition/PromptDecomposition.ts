@@ -86,13 +86,23 @@ class PromptDecomposition_Agentflow implements INode {
         }
 
         // Dynamic import to allow package to be optional
+        let pdeModule: any
+        try {
+            pdeModule = await import('ava-langchain-prompt-decomposition')
+        } catch {
+            throw new Error(
+                'ava-langchain-prompt-decomposition is not installed. ' +
+                'Install it with: npm install ava-langchain-prompt-decomposition'
+            )
+        }
+
         const {
             DirectionalDecomposer,
             IntentExtractor,
             DependencyMapper,
             ActionStackBuilder,
             MedicineWheelBridge
-        } = await import('ava-langchain-prompt-decomposition')
+        } = pdeModule
 
         const decomposer = new DirectionalDecomposer()
         const extractor = new IntentExtractor({ extractImplicit: includeImplicit })
