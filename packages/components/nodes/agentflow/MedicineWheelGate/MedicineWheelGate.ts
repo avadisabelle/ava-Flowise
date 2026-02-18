@@ -84,10 +84,20 @@ class MedicineWheelGate_Agentflow implements INode {
             throw new Error('Input text is required for Medicine Wheel assessment')
         }
 
+        let pdeModule: any
+        try {
+            pdeModule = await import('ava-langchain-prompt-decomposition')
+        } catch {
+            throw new Error(
+                'ava-langchain-prompt-decomposition is not installed. ' +
+                'Install it with: npm install ava-langchain-prompt-decomposition'
+            )
+        }
+
         const {
             DirectionalDecomposer,
             MedicineWheelBridge
-        } = await import('ava-langchain-prompt-decomposition')
+        } = pdeModule
 
         const decomposer = new DirectionalDecomposer({ neglectThreshold, balanceThreshold })
         const bridge = new MedicineWheelBridge({ ceremonyThreshold: balanceThreshold })
