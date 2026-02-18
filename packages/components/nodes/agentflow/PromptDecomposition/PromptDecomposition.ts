@@ -111,7 +111,7 @@ class PromptDecomposition_Agentflow implements INode {
         const bridge = new MedicineWheelBridge({ ceremonyThreshold })
 
         const directionalAnalysis = decomposer.decompose(prompt)
-        const intentResult = extractor.extract(prompt)
+        const intentResult = await extractor.extract(prompt)
         const graph = mapper.buildGraph(intentResult.secondary)
         const order = mapper.computeExecutionOrder(graph)
         const decomposition = builder.build(directionalAnalysis, intentResult, order)
