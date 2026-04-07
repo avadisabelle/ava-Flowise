@@ -1,6 +1,6 @@
 # 🌟 Agentic Flywheel: Narrative Intelligence Integration (2025-12-31)
 
-**Reference**: See main unified mission at `/workspace/langgraph/MISSION_251231.md`
+**Reference**: See main unified mission at `/workspace/repos/avadisabelle/ava-langgraph/MISSION_251231.md`
 
 ## Your Role in the Stack
 
@@ -315,7 +315,7 @@ routing_flows:
 
 ## Dependencies to Import
 
-From `/workspace/langgraph/libs/narrative-intelligence/`:
+From `/workspace/repos/avadisabelle/ava-langgraph/libs/narrative-intelligence/`:
 ```python
 from narrative_intelligence import (
     NCPState, StoryBeat, CharacterArcState,
