@@ -1,0 +1,1 @@
+declare module 'ava-langchain-prompt-decomposition';

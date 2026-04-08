@@ -115,3 +115,5 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.gemini/
+.hch/
